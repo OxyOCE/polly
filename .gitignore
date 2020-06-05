@@ -1,3 +1,8 @@
+# Custom
+secrets.yaml
+secret.yaml
+bot-env/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
