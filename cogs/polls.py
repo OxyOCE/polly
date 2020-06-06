@@ -2,6 +2,45 @@ from discord.ext import commands
 import discord
 import emoji
 from discord.utils import escape_markdown
+from textwrap import wrap
+import pandas as pd
+import matplotlib.pyplot as plt
+import io
+import datetime
+
+def gen_yticks(max_pt):
+    """Generates an array of y-axis ticks in integers - step is determined by the largest data point"""
+    if max_pt <= 10:
+        step = 1
+    elif max_pt <= 50:
+        step = 5
+    elif max_pt <= 100:
+        step = 10
+    elif max_pt <= 500:
+        step = 50
+    else:
+        step = 100
+
+    return range(0, max_pt + step, step)
+
+def trunc_label(label, num_opts=None, max_lines=None, max_length=25):
+    """Breaks the label up into 25 character max lines."""
+    """If the label space is too small, only some lines will be append and the rest will be represented with ..."""
+    if max_lines is None:
+        if num_opts <= 4:
+            max_lines = 4
+        elif num_opts <= 6:
+            max_lines = 3
+        elif num_opts <= 8:
+            max_lines = 2
+        else:
+            max_lines = 1
+
+    res = wrap(label, max_length)
+    res_full_length = len(res)
+    res = res[:min(res_full_length, max_lines)]
+
+    return "\n".join(res) + ("..." if res_full_length > max_lines else "")
 
 def gen_poll_options(poll):
     for option in poll.embeds[0].description.split("\n"):
@@ -126,6 +165,83 @@ class Polls(commands.Cog):
                     continue
 
                 await ctx.send(embed=result_embed)
+
+    @commands.command(name='image', aliases=['i', 'id', 'image-dark'])
+    async def collate_poll(self, ctx, *poll_ids: str):
+        """Summarises the given poll references
+        Use $id for dark theme
+        Use $i c<channel-id> <poll-args>... to specify a channel to pull from
+        """
+
+        id_fetch_point, poll_ids = await get_poll_context_channel(ctx, poll_ids)
+        if id_fetch_point is None:
+            return
+
+        async with ctx.typing():
+            async for poll, pid in gen_polls_from_ids(ctx, poll_ids, id_fetch_point):
+                poll_labels = []
+                poll_results = []
+                poll_title = trunc_label(poll.embeds[0].title, max_lines=2, max_length=50)
+
+                try:
+                    for _, desc, reaction in gen_poll_options(poll):
+                        poll_labels.append(trunc_label(desc, len(poll.reactions)))
+                        poll_results.append(reaction.count - 1)
+                except KeyError:
+                    await ctx.send(f'Error processing poll: `{pid}`')
+                    continue
+
+                data = pd.Series(poll_results, index=poll_labels)
+
+                axes = data.plot.bar(title=poll_title, x='options', color=plt.cm.tab10(range(len(data))))
+                axes.set_ylabel('Respondents')
+
+                if ctx.invoked_with in ['id', 'image-dark']:
+                    line_colors = "#FFFFFF"
+
+                    axes.spines['bottom'].set_color(line_colors)
+                    axes.spines['top'].set_color(line_colors)
+                    axes.spines['left'].set_color(line_colors)
+                    axes.spines['right'].set_color(line_colors)
+
+                    axes.tick_params(colors=line_colors)
+
+                    axes.yaxis.label.set_color(line_colors)
+                    axes.xaxis.label.set_color(line_colors)
+
+                    axes.title.set_color(line_colors)
+
+                    axes.set_facecolor("#2C2F33")
+
+                    bg_color = "#2C2F33"
+                    bar_top_color = line_colors
+                else:
+                    bg_color = "#FFFFFF"
+                    bar_top_color = "k"  # aka black
+
+                _, top_ylim = plt.ylim()
+                top_ylim *= 1.02
+                plt.ylim(bottom=0, top=top_ylim)
+
+                plt.yticks(gen_yticks(max(poll_results)))  # Appropriate tick spacing for number of respondents
+                plt.xticks(rotation=45)
+
+                # Adds number of respondents at top of bars
+                for x, y in enumerate(poll_results):
+                    axes.text(x, y, str(y), ha='center', va='bottom', color=bar_top_color)
+
+                plt.tight_layout()  # Ensures label text is not cut off
+
+                png_wrapper = io.BytesIO()
+                plt.savefig(png_wrapper, format='png', facecolor=bg_color)
+                png_wrapper.seek(0)
+
+                dt = datetime.datetime
+                filename = "gp-poll-" + pid + "-" + dt.strftime(dt.utcnow(), "%Y-%m-%d-%H-%M-%S") + ".png"
+                await ctx.send(file=discord.File(png_wrapper, filename=filename))
+
+                png_wrapper.close()
+                plt.close()
 
 def setup(bot):
     bot.add_cog(Polls(bot))

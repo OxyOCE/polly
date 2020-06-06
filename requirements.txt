@@ -1,3 +1,5 @@
 discord.py
 pyyaml
 emoji
+pandas
+matplotlib
