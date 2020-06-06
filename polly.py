@@ -7,4 +7,9 @@ bot = commands.Bot(command_prefix='!')
 async def on_ready():
     print('Ready')
 
-bot.run(SECRETS['DISCORD_API_KEY'])
+def main():
+    bot.load_extension('cogs.polls')
+    bot.run(SECRETS['DISCORD_API_KEY'])
+
+if __name__ == '__main__':
+    main()
